@@ -37,7 +37,13 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
 
 class ResidualBlock(TimestepBlock):
     def __init__(
-        self, in_channel: int, time_embed_dim: int, out_channel: int, dropout: float
+        self,
+        in_channel: int,
+        time_embed_dim: int,
+        out_channel: int,
+        dropout: float,
+        upsample: bool = False,
+        downsample: bool = False,
     ):
         super().__init__()  # type: ignore
 
@@ -45,10 +51,22 @@ class ResidualBlock(TimestepBlock):
         self.time_embed_dim = time_embed_dim
         self.out_channel = out_channel
         self.dropout = dropout
+        self.downsample = downsample
+        self.upsample = upsample
 
-        self.embedding_layer = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.time_embed_dim, self.out_channel)
-        )
+        self.upordown = self.upsample or self.downsample
+
+        self.h_upd: UpSampling | DownSampling | nn.Identity
+        self.x_upd: UpSampling | DownSampling | nn.Identity
+
+        if upsample:
+            self.h_upd = UpSampling(self.in_channel, self.out_channel, use_conv=False)
+            self.x_upd = UpSampling(self.in_channel, self.out_channel, use_conv=False)
+        elif downsample:
+            self.h_upd = DownSampling(self.in_channel, self.out_channel, use_conv=False)
+            self.x_upd = DownSampling(self.in_channel, self.out_channel, use_conv=False)
+        else:
+            self.h_upd = self.x_upd = nn.Identity()
 
         self.input_layer = nn.Sequential(
             nn.GroupNorm(32, self.in_channel),
@@ -58,25 +76,39 @@ class ResidualBlock(TimestepBlock):
             ),  # Increase the number if channel while keeping the resolution intact
         )
 
+        self.embedding_layer = nn.Sequential(
+            nn.SiLU(), nn.Linear(self.time_embed_dim, self.out_channel)
+        )
+
         self.output_layer = nn.Sequential(
             nn.GroupNorm(32, self.out_channel),
             nn.SiLU(),
             nn.Dropout(self.dropout),
-            nn.Conv2d(
-                self.out_channel, self.out_channel, 3, padding=1
+            zero_module(
+                nn.Conv2d(self.out_channel, self.out_channel, 3, padding=1)
             ),  # TODO: Need to zero this one
         )
 
         if self.in_channel == self.out_channel:
             self.skip_connection: nn.Conv2d | nn.Identity = nn.Identity()
         else:
-            self.skip_connection: nn.Conv2d | nn.Identity = nn.Conv2d(
+            self.skip_connection = nn.Conv2d(
                 self.in_channel, self.out_channel, 3, padding=1
             )
 
     def forward(self, input_tensor: torch.Tensor, timesteps_encoding: torch.Tensor):
+
+        if self.upordown:
+            in_rest, in_conv = self.input_layer[:-1], self.input_layer[-1]
+            hidden = in_rest(input_tensor)
+            hidden = self.h_upd(h)
+            input_tensor = self.x_upd(input_tensor)
+            hidden = in_conv(input_tensor)
+        else:
+            hidden = self.input_layer(input_tensor)
+
         timesteps_embedding = self.embedding_layer(timesteps_encoding)
-        transformed_input_tensor = self.input_layer(input_tensor)
+        transformed_input_tensor = self.input_layer(hidden)
         input_to_second_layer = (
             timesteps_embedding.unsqueeze(dim=2).unsqueeze(dim=3)
             + transformed_input_tensor
@@ -90,25 +122,46 @@ class ResidualBlock(TimestepBlock):
 
 class DownSampling(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int, stride: int = 2, padding: int = 1
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 2,
+        padding: int = 1,
+        use_conv: bool = True,
     ):
         super().__init__()  # type: ignore
-        self.downsampling_layer = nn.Conv2d(
-            in_channels, out_channels, 3, stride=stride, padding=padding
-        )
+        self.use_conv = use_conv
+        self.downsampling_layer: nn.Conv2d | nn.AvgPool2d
+
+        if self.use_conv:
+            self.downsampling_layer = nn.Conv2d(
+                in_channels, out_channels, 3, stride=stride, padding=padding
+            )
+        else:
+            self.downsampling_layer = nn.AvgPool2d(kernel_size=stride, stride=stride)
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         return self.downsampling_layer(input_tensor)
 
 
 class UpSampling(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, padding: int = 1):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        padding: int = 1,
+        use_conv: bool = True,
+    ):
         super().__init__()  # type: ignore
-        self.conv_layer = nn.Conv2d(in_channels, out_channels, 3, padding=padding)
+        self.use_conv = use_conv
+        if self.use_conv:
+            self.conv_layer = nn.Conv2d(in_channels, out_channels, 3, padding=padding)
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="nearest")  # type: ignore
-        return self.conv_layer(input_tensor)
+        if self.use_conv:
+            return self.conv_layer(input_tensor)
+        return input_tensor  # type: ignore
 
 
 class Unet(nn.Module):
@@ -121,6 +174,7 @@ class Unet(nn.Module):
         residual_blocks_num: int,
         dropout: float,
         attention_resolutions: List[int],
+        num_classes: int = 0,
     ) -> None:
         super().__init__()  # type: ignore
 
@@ -131,6 +185,7 @@ class Unet(nn.Module):
         self.residual_blocks_num = residual_blocks_num
         self.dropout = dropout
         self.attention_resolutions = attention_resolutions
+        self.num_classes = num_classes
 
         # embed timesteps
         self.time_embedding_dim = 4 * model_channels
@@ -139,6 +194,10 @@ class Unet(nn.Module):
             nn.SiLU(),
             nn.Linear(self.time_embedding_dim, self.time_embedding_dim),
         )
+
+        # classes embedding
+        if self.num_classes:
+            self.label_emb = nn.Embedding(self.num_classes, self.time_embedding_dim)
 
         # input downsampling block
         self.input_blocks = nn.ModuleList(
@@ -150,32 +209,35 @@ class Unet(nn.Module):
         for level, mult in enumerate(self.mult_channel):
             current_channels = mult * self.model_channels
             for _ in range(self.residual_blocks_num):
-                self.input_blocks.append(
-                    TimestepEmbedSequential(
-                        ResidualBlock(
-                            previous_channels,
-                            self.time_embedding_dim,
-                            current_channels,
-                            self.dropout,
-                        )
+                layers: List[ResidualBlock | AttentionBlock] = [
+                    ResidualBlock(
+                        previous_channels,
+                        self.time_embedding_dim,
+                        current_channels,
+                        self.dropout,
                     )
-                )
+                ]
                 previous_channels = current_channels
                 channels_register.append(previous_channels)
 
                 if att_res in self.attention_resolutions:
-                    self.input_blocks.append(
-                        TimestepEmbedSequential(
-                            AttentionBlock(
-                                previous_channels, num_heads=4, num_head_channels=-1,
-                            )
+                    layers.append(
+                        AttentionBlock(
+                            previous_channels, num_heads=4, num_head_channels=-1
                         )
                     )
+                self.input_blocks.append(TimestepEmbedSequential(*layers))
 
             if level != len(self.mult_channel) - 1:
                 self.input_blocks.append(
                     TimestepEmbedSequential(
-                        DownSampling(current_channels, current_channels)
+                        ResidualBlock(
+                            current_channels,
+                            self.time_embedding_dim,
+                            current_channels,
+                            self.dropout,
+                            downsample=True,
+                        )
                     )
                 )
                 att_res *= 2
@@ -203,7 +265,7 @@ class Unet(nn.Module):
             current_channels = mult * self.model_channels
             for i in range(self.residual_blocks_num + 1):
                 res_channel = channels_register.pop()
-                layers: List[nn.Module] = [
+                layers = [
                     ResidualBlock(
                         previous_channels + res_channel,
                         self.time_embedding_dim,
@@ -220,7 +282,15 @@ class Unet(nn.Module):
                         )
                     )
                 if level and i == self.residual_blocks_num:
-                    layers.append(UpSampling(current_channels, current_channels))
+                    layers.append(
+                        ResidualBlock(
+                            current_channels,
+                            self.time_embedding_dim,
+                            current_channels,
+                            self.dropout,
+                            upsample=True,
+                        )
+                    )
                     att_res = int(att_res // 2)
 
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
@@ -234,10 +304,15 @@ class Unet(nn.Module):
         self,
         input_tensor: torch.Tensor,  # Expected shape B x 3 x H x W
         timesteps: torch.Tensor,  # Expected shape B x 1 or B
+        labels: torch.Tensor | None = None,  # Expected shape B x 1
     ) -> torch.Tensor:  # Expected shape B x 3 x H x W
         embeded_timesteps = self.time_embedding_mlp(
             encode_timestep(timesteps, dimension=self.model_channels)
         )
+
+        if self.num_classes:
+            embeded_timesteps = embeded_timesteps + self.label_emb(labels)
+
         res_connection: List[torch.Tensor] = []
         for module in self.input_blocks:
             input_tensor = module(input_tensor, embeded_timesteps)
@@ -254,7 +329,19 @@ class Unet(nn.Module):
         return output_tensor
 
 
-timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-input_tensor_s = torch.randn(10, 3, 64, 64)
-unet = Unet(3, 3, 128, [1, 2, 4], 4, 0.5, [])
-print(unet(input_tensor_s, timesteps_s).size())
+RUN = True
+PATH_ROOT = "/Users/aimans/Storage/consistency_models/"
+if RUN:
+    timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    input_tensor_s = torch.randn(10, 3, 64, 64)
+    unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], 1)
+    # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
+    # params = unet.state_dict()
+    # test_params_unet = {k:v for k,v in params.items() if 'down' not in k and 'upsam' not in k }
+    print("len custom unet param", len(list(unet.state_dict().keys())))
+
+    test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
+    print("len edm unet param after removing label layer", len(test_params.keys()))
+    for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
+        print(c)
+        print("#" * 40, e)
