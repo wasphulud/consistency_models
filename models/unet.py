@@ -59,12 +59,16 @@ class ResidualBlock(TimestepBlock):
         self.h_upd: UpSampling | DownSampling | nn.Identity
         self.x_upd: UpSampling | DownSampling | nn.Identity
 
+        self.embedding_layer = nn.Sequential(
+            nn.SiLU(), nn.Linear(self.time_embed_dim, self.out_channel)
+        )
+
         if upsample:
-            self.h_upd = UpSampling(self.in_channel, self.out_channel, use_conv=False)
-            self.x_upd = UpSampling(self.in_channel, self.out_channel, use_conv=False)
+            self.h_upd = UpSampling(self.in_channel, self.in_channel, use_conv=False)
+            self.x_upd = UpSampling(self.in_channel, self.in_channel, use_conv=False)
         elif downsample:
-            self.h_upd = DownSampling(self.in_channel, self.out_channel, use_conv=False)
-            self.x_upd = DownSampling(self.in_channel, self.out_channel, use_conv=False)
+            self.h_upd = DownSampling(self.in_channel, self.in_channel, use_conv=False)
+            self.x_upd = DownSampling(self.in_channel, self.in_channel, use_conv=False)
         else:
             self.h_upd = self.x_upd = nn.Identity()
 
@@ -76,9 +80,6 @@ class ResidualBlock(TimestepBlock):
             ),  # Increase the number if channel while keeping the resolution intact
         )
 
-        self.embedding_layer = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.time_embed_dim, self.out_channel)
-        )
 
         self.output_layer = nn.Sequential(
             nn.GroupNorm(32, self.out_channel),
@@ -98,17 +99,20 @@ class ResidualBlock(TimestepBlock):
 
     def forward(self, input_tensor: torch.Tensor, timesteps_encoding: torch.Tensor):
 
+        timesteps_embedding = self.embedding_layer(timesteps_encoding)
+
+        
         if self.upordown:
             in_rest, in_conv = self.input_layer[:-1], self.input_layer[-1]
-            hidden = in_rest(input_tensor)
-            hidden = self.h_upd(h)
+            transformed_input_tensor = in_rest(input_tensor)
+            transformed_input_tensor = self.h_upd(transformed_input_tensor)
             input_tensor = self.x_upd(input_tensor)
-            hidden = in_conv(input_tensor)
+            transformed_input_tensor = in_conv(transformed_input_tensor)
         else:
-            hidden = self.input_layer(input_tensor)
+            transformed_input_tensor = self.input_layer(input_tensor)
 
-        timesteps_embedding = self.embedding_layer(timesteps_encoding)
-        transformed_input_tensor = self.input_layer(hidden)
+
+
         input_to_second_layer = (
             timesteps_embedding.unsqueeze(dim=2).unsqueeze(dim=3)
             + transformed_input_tensor
@@ -334,14 +338,15 @@ PATH_ROOT = "/Users/aimans/Storage/consistency_models/"
 if RUN:
     timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     input_tensor_s = torch.randn(10, 3, 64, 64)
-    unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], 1)
+    unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], num_classes=0)
+    print(unet(input_tensor_s, timesteps_s).size())
     # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
     # params = unet.state_dict()
     # test_params_unet = {k:v for k,v in params.items() if 'down' not in k and 'upsam' not in k }
-    print("len custom unet param", len(list(unet.state_dict().keys())))
+    #print("len custom unet param", len(list(unet.state_dict().keys())))
 
-    test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
-    print("len edm unet param after removing label layer", len(test_params.keys()))
-    for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
-        print(c)
-        print("#" * 40, e)
+    #test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
+    #print("len edm unet param after removing label layer", len(test_params.keys()))
+    #for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
+    #    print(c)
+    #    print("#" * 40, e)
