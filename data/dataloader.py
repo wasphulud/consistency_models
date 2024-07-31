@@ -6,7 +6,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 
-def _list_image_files_recursively(data_dir): #TODO re-read and re-write
+def _list_image_files_recursively(data_dir):  # TODO re-read and re-write
     results = []
     for entry in sorted(bf.listdir(data_dir)):
         full_path = bf.join(data_dir, entry)
@@ -17,7 +17,8 @@ def _list_image_files_recursively(data_dir): #TODO re-read and re-write
             results.extend(_list_image_files_recursively(full_path))
     return results
 
-def center_crop_arr(pil_image, image_size): #TODO re-read and re-write:
+
+def center_crop_arr(pil_image, image_size):  # TODO re-read and re-write:
     # We are not on a new enough PIL to support the `reducing_gap`
     # argument, which uses BOX downsampling at powers of two first.
     # Thus, we do it by hand to improve downsample quality.
@@ -38,24 +39,19 @@ def center_crop_arr(pil_image, image_size): #TODO re-read and re-write:
 
 
 class ImageDataset(Dataset):
-    def __init__(
-            self,
-            resolution,
-            images_paths,
-            classes=None
-    ):
-        
+    def __init__(self, resolution, images_paths, classes=None):
+
         super().__init__()
         self.resolution = resolution
         self.local_images = images_paths
-        self.classes = classes 
+        self.classes: int = classes
         self.random_flip = False
 
     def __len__(self):
         return len(self.local_images)
 
-    def __getitem__(self, idx): #TODO re-read and re-write:
-        path: str = self.local_images[idx]
+    def __getitem__(self, idx):  # TODO re-read and re-write:
+        path: strt = self.local_images[idx]
         with bf.BlobFile(path, "rb") as f:
             pil_image = Image.open(f)
             pil_image.load()
@@ -71,21 +67,25 @@ class ImageDataset(Dataset):
             out_dict["y"] = np.array(self.classes[idx], dtype=np.int64)
         return np.transpose(arr, [2, 0, 1]), out_dict
 
-def load_data(
-        data_dir: str,
-        batch_size: int,
-        image_size: int,
-        class_cond: bool = False
-):
-    classes = None # TODO to be updated after implementing loading data without labels
-    all_files = _list_image_files_recursively(data_dir)
 
-    dataset = ImageDataset(
-        image_size,
-        all_files,
-        classes=classes
+def load_data(
+    data_dir: str,
+    batch_size: int,
+    image_size: int,
+    shuffle: bool = False,
+    class_cond: bool = False,
+):
+    classes = None  # TODO to be updated after implementing loading data without labels
+    all_files = _list_image_files_recursively(data_dir)
+    if class_cond:
+        # Assume classes are the first part of the filename,
+        # before an underscore.
+        class_names = [bf.basename(path).split("_")[0] for path in all_files]
+        sorted_classes = {x: i for i, x in enumerate(sorted(set(class_names)))}
+        classes = [sorted_classes[x] for x in class_names]
+
+    dataset = ImageDataset(image_size, all_files, classes=classes)
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1, drop_last=True
     )
-    loader = DataLoader (
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-        )
     yield from loader
