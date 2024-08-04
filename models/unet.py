@@ -189,9 +189,9 @@ class Unet(nn.Module):
         self.num_classes = num_classes
 
         # embed timesteps
-        self.time_embedding_dim = 4 * model_channels
+        self.time_embedding_dim = 4 * self.model_channels
         self.time_embedding_mlp = nn.Sequential(
-            nn.Linear(model_channels, self.time_embedding_dim),
+            nn.Linear(self.model_channels, self.time_embedding_dim),
             nn.SiLU(),
             nn.Linear(self.time_embedding_dim, self.time_embedding_dim),
         )
@@ -202,7 +202,7 @@ class Unet(nn.Module):
 
         # input downsampling block
         self.input_blocks = nn.ModuleList(
-            [TimestepEmbedSequential(nn.Conv2d(3, 128, 3, padding=1))]
+            [TimestepEmbedSequential(nn.Conv2d(3, self.model_channels, 3, padding=1))]
         )
         previous_channels = self.mult_channel[0] * self.model_channels
         att_res = 1
