@@ -3,6 +3,7 @@ import functools
 import sys
 from typing import Any, Iterator, List, Mapping, Tuple, Union
 
+import numpy as np
 import torch
 from denoising.karras_denoiser import consistency_loss
 from infrastructure.device import get_device
@@ -20,7 +21,7 @@ class CDTrainLoop:
         model: nn.Module,
         teacher_model: nn.Module,
         target_model: nn.Module,
-        dataloader: Iterator[Tuple[torch.Tensor, Mapping[str, List[int]]]],
+        dataloader: Iterator[Tuple[torch.Tensor, Mapping[str, torch.Tensor]]],
         experiment_args: Mapping[str, Any],
         device: Union[str, torch.device, int],
     ):  # type: ignore
@@ -80,11 +81,13 @@ class CDTrainLoop:
 
         while self.current_step < self.total_training_steps:
             batch, cond = next(self.dataloader)
+            batch = batch.to(self.device)
+            cond = {k: v.to(self.device) for k, v in cond.items()}
             print("batch loaded")
             self.run_step(batch, cond)
             print("step ran")
 
-    def run_step(self, batch: torch.Tensor, cond: Mapping[str, List[int]]):
+    def run_step(self, batch: torch.Tensor, cond: Mapping[str, torch.Tensor]):
         self.opt.zero_grad()
         self.forward_backward(batch, cond)
         self.opt.step()
@@ -95,14 +98,13 @@ class CDTrainLoop:
     def forward_backward(
         self,
         batch: torch.Tensor,
-        cond: Mapping[str, List[int]],
+        cond: Mapping[str, torch.Tensor],
     ):
-        timestep, weights = self.sampler.sample(batch.shape[0])
-
+        timestep, weights = self.sampler.sample(batch.shape[0], self.device)
+        _ = timestep  # maybe will be used later
         _, num_scales = self.ema_fn()
 
-        loss: torch.Tensor = functools.partial(
-            consistency_loss,  # TODO implement consistenncy_losses
+        loss: torch.Tensor = consistency_loss(
             self.model,
             batch,
             num_scales,
@@ -113,11 +115,11 @@ class CDTrainLoop:
             self.sigma_min,
             self.sigma_max,
             self.rho,
-        )()  # TODO This has no sense to use partial func like this, it might have more sense if we are using ddp or/and cuda - we will keep it for now
+        )
         loss = (loss * weights).mean()
         print("got loss", loss)
 
-        loss.backward()
+        loss.backward()  # type: ignore
         print("backward run")
 
     def _update_ema(self):
