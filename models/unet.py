@@ -4,8 +4,9 @@ from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from attention import AttentionBlock
-from timesteps_handler import encode_timestep
+
+from .attention import AttentionBlock
+from .timesteps_handler import encode_timestep
 
 
 def zero_module(module):
@@ -80,7 +81,6 @@ class ResidualBlock(TimestepBlock):
             ),  # Increase the number if channel while keeping the resolution intact
         )
 
-
         self.output_layer = nn.Sequential(
             nn.GroupNorm(32, self.out_channel),
             nn.SiLU(),
@@ -101,7 +101,6 @@ class ResidualBlock(TimestepBlock):
 
         timesteps_embedding = self.embedding_layer(timesteps_encoding)
 
-        
         if self.upordown:
             in_rest, in_conv = self.input_layer[:-1], self.input_layer[-1]
             transformed_input_tensor = in_rest(input_tensor)
@@ -110,8 +109,6 @@ class ResidualBlock(TimestepBlock):
             transformed_input_tensor = in_conv(transformed_input_tensor)
         else:
             transformed_input_tensor = self.input_layer(input_tensor)
-
-
 
         input_to_second_layer = (
             timesteps_embedding.unsqueeze(dim=2).unsqueeze(dim=3)
@@ -282,7 +279,9 @@ class Unet(nn.Module):
                 if att_res in self.attention_resolutions:
                     layers.append(
                         AttentionBlock(
-                            previous_channels, num_heads=4, num_head_channels=-1,
+                            previous_channels,
+                            num_heads=4,
+                            num_head_channels=-1,
                         )
                     )
                 if level and i == self.residual_blocks_num:
@@ -308,14 +307,14 @@ class Unet(nn.Module):
         self,
         input_tensor: torch.Tensor,  # Expected shape B x 3 x H x W
         timesteps: torch.Tensor,  # Expected shape B x 1 or B
-        labels: torch.Tensor | None = None,  # Expected shape B x 1
+        y: torch.Tensor | None = None,  # Expected shape B x 1
     ) -> torch.Tensor:  # Expected shape B x 3 x H x W
         embeded_timesteps = self.time_embedding_mlp(
             encode_timestep(timesteps, dimension=self.model_channels)
         )
 
         if self.num_classes:
-            embeded_timesteps = embeded_timesteps + self.label_emb(labels)
+            embeded_timesteps = embeded_timesteps + self.label_emb(y)
 
         res_connection: List[torch.Tensor] = []
         for module in self.input_blocks:
@@ -333,20 +332,20 @@ class Unet(nn.Module):
         return output_tensor
 
 
-RUN = True
-PATH_ROOT = "/Users/aimans/Storage/consistency_models/"
-if RUN:
-    timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    input_tensor_s = torch.randn(10, 3, 64, 64)
-    unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], num_classes=0)
-    print(unet(input_tensor_s, timesteps_s).size())
-    # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
-    # params = unet.state_dict()
-    # test_params_unet = {k:v for k,v in params.items() if 'down' not in k and 'upsam' not in k }
-    #print("len custom unet param", len(list(unet.state_dict().keys())))
+# RUN = True
+# PATH_ROOT = "/Users/aimans/Storage/consistency_models/"
+# if RUN:
+#     timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+#     input_tensor_s = torch.randn(10, 3, 64, 64)
+#     unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], num_classes=0)
+#     print(unet(input_tensor_s, timesteps_s).size())
+#     # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
+#     # params = unet.state_dict()
+#     # test_params_unet = {k:v for k,v in params.items() if 'down' not in k and 'upsam' not in k }
+#     #print("len custom unet param", len(list(unet.state_dict().keys())))
 
-    #test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
-    #print("len edm unet param after removing label layer", len(test_params.keys()))
-    #for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
-    #    print(c)
-    #    print("#" * 40, e)
+#     #test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
+#     #print("len edm unet param after removing label layer", len(test_params.keys()))
+#     #for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
+#     #    print(c)
+#     #    print("#" * 40, e)

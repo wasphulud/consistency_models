@@ -23,6 +23,7 @@ def checkpoint(func, inputs, params, flag):
     else:
         return func(*inputs)
 
+
 def conv_nd(dims, *args, **kwargs):
     """
     Create a 1D, 2D, or 3D convolution module.
@@ -35,6 +36,7 @@ def conv_nd(dims, *args, **kwargs):
         return nn.Conv3d(*args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
 
+
 def zero_module(module):
     """
     Zero out the parameters of a module and return it.
@@ -42,6 +44,8 @@ def zero_module(module):
     for p in module.parameters():
         p.detach().zero_()
     return module
+
+
 def normalization(channels):
     """
     Make a standard normalization layer.
@@ -51,9 +55,11 @@ def normalization(channels):
     """
     return GroupNorm32(32, channels)
 
+
 class GroupNorm32(nn.GroupNorm):
     def forward(self, x):
         return super().forward(x.float()).type(x.dtype)
+
 
 class QKVAttentionLegacy(nn.Module):
     """
@@ -64,8 +70,8 @@ class QKVAttentionLegacy(nn.Module):
         super().__init__()
         self.n_heads = n_heads
         from einops import rearrange
-        self.rearrange = rearrange
 
+        self.rearrange = rearrange
 
     def forward(self, qkv):
         """
@@ -79,13 +85,13 @@ class QKVAttentionLegacy(nn.Module):
         ch = width // (3 * self.n_heads)
         qkv = qkv.half()
 
-        qkv =   self.rearrange(
+        qkv = self.rearrange(
             qkv, "b (three h d) s -> b s three h d", three=3, h=self.n_heads
-        ) 
+        )
         q, k, v = qkv.transpose(1, 3).transpose(3, 4).split(1, dim=2)
-        q = q.reshape(bs*self.n_heads, ch, length)
-        k = k.reshape(bs*self.n_heads, ch, length)
-        v = v.reshape(bs*self.n_heads, ch, length)
+        q = q.reshape(bs * self.n_heads, ch, length)
+        k = k.reshape(bs * self.n_heads, ch, length)
+        v = v.reshape(bs * self.n_heads, ch, length)
 
         scale = 1 / math.sqrt(math.sqrt(ch))
         weight = th.einsum(
@@ -99,6 +105,8 @@ class QKVAttentionLegacy(nn.Module):
     @staticmethod
     def count_flops(model, _x, y):
         return count_flops_attn(model, _x, y)
+
+
 class AttentionBlock(nn.Module):
     """
     An attention block that allows spatial positions to attend to each other.
@@ -125,10 +133,9 @@ class AttentionBlock(nn.Module):
             self.num_heads = channels // num_head_channels
         self.norm = normalization(channels)
         self.qkv = conv_nd(2, channels, channels * 3, 1)
-        
+
         # split heads before split qkv
         self.attention = QKVAttentionLegacy(self.num_heads)
-
 
         if encoder_channels is not None:
             self.encoder_kv = conv_nd(1, encoder_channels, channels * 2, 1)
@@ -136,22 +143,16 @@ class AttentionBlock(nn.Module):
 
     def forward(self, x, encoder_out=None):
         if encoder_out is None:
-            return checkpoint(
-                self._forward, (x,), self.parameters(), False
-            )
+            return checkpoint(self._forward, (x,), self.parameters(), False)
         else:
-            return checkpoint(
-                self._forward, (x, encoder_out), self.parameters(), False
-            )
+            return checkpoint(self._forward, (x, encoder_out), self.parameters(), False)
 
     def _forward(self, x, encoder_out=None):
         b, _, *spatial = x.shape
         qkv = self.qkv(self.norm(x)).view(b, -1, np.prod(spatial))
         if encoder_out is not None:
             encoder_out = self.encoder_kv(encoder_out)
-            h = checkpoint(
-                self.attention, (qkv, encoder_out), (), False
-            )
+            h = checkpoint(self.attention, (qkv, encoder_out), (), False)
         else:
             h = checkpoint(self.attention, (qkv,), (), False)
         h = h.view(b, -1, *spatial)
