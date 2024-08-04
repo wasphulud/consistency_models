@@ -153,7 +153,29 @@ class CDTrainLoop:
 def initialize_inputs(dataloader: DataLoader, model: nn.Module, teacher_path: str):  # type: ignore
     model.train()
     teacher_model = copy.deepcopy(model)
-    # teacher_model.load_state_dict(torch.load(teacher_path))  # type: ignore
+    teacher_ckpt = torch.load(teacher_path)
+    print("len custom unet param", len(list(teacher_model.state_dict().keys())))
+    print("len edm unet param after removing label layer", len(teacher_ckpt.keys()))
+
+    mapping = {
+        "embedding_layer": "emb_layers",
+        "time_embedding_mlp": "time_embed",
+        "output_layer": "out_layers",
+        "input_layer": "in_layers",
+    }
+
+    renamed_dict = {}
+    for key, value in teacher_ckpt.items():
+        new_key = key  # Start with the original key
+        for new_substring, old_substring in mapping.items():
+            if old_substring in new_key:
+                # Replace the substring if found in the key
+                new_key = new_key.replace(old_substring, new_substring)
+
+        # Add the renamed key and its corresponding value to the new dictionary
+        renamed_dict[new_key] = value
+    teacher_model.load_state_dict(renamed_dict)  # type: ignore
+    print("target model loaded")
     teacher_model.eval()
 
     target_model = copy.deepcopy(model)

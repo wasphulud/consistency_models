@@ -48,6 +48,8 @@ class ResidualBlock(TimestepBlock):
     ):
         super().__init__()  # type: ignore
 
+        self.use_conv_for_skip_connection = False
+
         self.in_channel = in_channel
         self.time_embed_dim = time_embed_dim
         self.out_channel = out_channel
@@ -61,7 +63,10 @@ class ResidualBlock(TimestepBlock):
         self.x_upd: UpSampling | DownSampling | nn.Identity
 
         self.embedding_layer = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.time_embed_dim, self.out_channel)
+            nn.SiLU(),
+            nn.Linear(
+                self.time_embed_dim, 2 * self.out_channel
+            ),  # TODO check use_scale_shift_norm
         )
 
         if upsample:
@@ -93,8 +98,9 @@ class ResidualBlock(TimestepBlock):
         if self.in_channel == self.out_channel:
             self.skip_connection: nn.Conv2d | nn.Identity = nn.Identity()
         else:
+            channel = 3 if self.use_conv_for_skip_connection else 1
             self.skip_connection = nn.Conv2d(
-                self.in_channel, self.out_channel, 3, padding=1
+                self.in_channel, self.out_channel, channel, padding=0
             )
 
     def forward(self, input_tensor: torch.Tensor, timesteps_encoding: torch.Tensor):
@@ -110,13 +116,21 @@ class ResidualBlock(TimestepBlock):
         else:
             transformed_input_tensor = self.input_layer(input_tensor)
 
-        input_to_second_layer = (
-            timesteps_embedding.unsqueeze(dim=2).unsqueeze(dim=3)
-            + transformed_input_tensor
-        )  # unqueeze timesteps embedding until it has the dimen len size than the transformed
-        output_tensor = self.output_layer(input_to_second_layer) + self.skip_connection(
-            input_tensor
-        )
+        timesteps_embedding = timesteps_embedding.unsqueeze(dim=2).unsqueeze(dim=3)
+
+        if (
+            True
+        ):  # TODO FIXME revisit later to understand the use of scale and shift norm
+            output_norm, output_rest = self.output_layer[0], self.output_layer[1]
+            scale, shift = torch.chunk(timesteps_embedding, 2, dim=1)
+            output_tensor = output_norm(transformed_input_tensor) * (1 + scale) + shift
+            output_tensor = output_rest(transformed_input_tensor)
+        else:
+            input_to_second_layer = (
+                transformed_input_tensor + timesteps_embedding
+            )  # unqueeze timesteps embedding until it has the dimen len size than the transformed
+            output_tensor = self.output_layer(input_to_second_layer)
+        output_tensor = output_tensor + self.skip_connection(input_tensor)
 
         return output_tensor
 
@@ -335,17 +349,54 @@ class Unet(nn.Module):
 # RUN = True
 # PATH_ROOT = "/Users/aimans/Storage/consistency_models/"
 # if RUN:
-#     timesteps_s = torch.Tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+#     timesteps_s = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=torch.long)
 #     input_tensor_s = torch.randn(10, 3, 64, 64)
-#     unet = Unet(3, 3, 128, [1, 2, 3, 4], 3, 0.5, [2, 4, 8], num_classes=0)
-#     print(unet(input_tensor_s, timesteps_s).size())
-#     # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
-#     # params = unet.state_dict()
-#     # test_params_unet = {k:v for k,v in params.items() if 'down' not in k and 'upsam' not in k }
-#     #print("len custom unet param", len(list(unet.state_dict().keys())))
+#     unet_inputs = {
+#         "input_channels": 3,
+#         "output_channels": 3,
+#         "model_channels": 192,
+#         "mult_channel": [1, 2, 3, 4],
+#         "residual_blocks_num": 3,
+#         "dropout": 0.1,
+#         "attention_resolutions": [2, 4, 8],
+#         "num_classes": 1000,
+#     }
+#     unet = Unet(**unet_inputs)
 
-#     #test_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
-#     #print("len edm unet param after removing label layer", len(test_params.keys()))
-#     #for (c, e) in zip(list(unet.state_dict().keys()), list(test_params.keys())[:348]):
-#     #    print(c)
-#     #    print("#" * 40, e)
+#     print(unet(input_tensor_s, timesteps_s, timesteps_s).size())
+# # torch.save(unet.state_dict(), PATH_ROOT + 'unet.pt')
+# params = unet.state_dict()
+# test_params_unet = {
+#     k: v for k, v in params.items() if "down" not in k and "upsam" not in k
+# }
+# print("len custom unet param", len(list(unet.state_dict().keys())))
+
+# edm_params = torch.load(PATH_ROOT + "edm_imagenet64_ema.pt")  # type: ignore
+# print("len edm unet param after removing label layer", len(edm_params.keys()))
+
+# mapping = {
+#     "embedding_layer": "emb_layers",
+#     "time_embedding_mlp": "time_embed",
+#     "output_layer": "out_layers",
+#     "input_layer": "in_layers",
+# }
+
+# renamed_dict = {}
+# for key, value in edm_params.items():
+#     new_key = key  # Start with the original key
+#     for new_substring, old_substring in mapping.items():
+#         if old_substring in new_key:
+#             # Replace the substring if found in the key
+#             new_key = new_key.replace(old_substring, new_substring)
+
+#     # Add the renamed key and its corresponding value to the new dictionary
+#     renamed_dict[new_key] = value
+
+# for element in list(unet.state_dict().keys())[:300]:
+#     print(element)
+#     print(
+#         "#" * 40,
+#         unet.state_dict()[element].size(),
+#         renamed_dict[element].size(),
+#         unet.state_dict()[element].size() == renamed_dict[element].size(),
+#     )
