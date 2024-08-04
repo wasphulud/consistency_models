@@ -12,9 +12,9 @@ Upskill DGM
 - [x] ~~Implement optimization using RADAM~~
 - [x] ~~Implement EMA~~
 - [x] ~~Use GPU~~
+- [ ] Save and load weights
+- [ ] sample images
 - [ ] Train and overfit small dataset
 - [ ] Improve Readme
-- [ ] Clean
-- [ ] Refactor + finalize type hint
-- [ ] Improve Readme
+- [ ] Refactor
 - [ ] Type hint
