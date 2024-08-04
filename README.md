@@ -11,10 +11,10 @@ Upskill DGM
 - [x] ~~Implement consistency loss~~
 - [x] ~~Implement optimization using RADAM~~
 - [x] ~~Implement EMA~~
-- [ ] Use GPU
-- [ ] Type hint
+- [x] ~~Use GPU~~
 - [ ] Train and overfit small dataset
 - [ ] Improve Readme
 - [ ] Clean
 - [ ] Refactor + finalize type hint
 - [ ] Improve Readme
+- [ ] Type hint
