@@ -65,6 +65,8 @@ class ImageDataset(Dataset):
         out_dict = {}
         if self.classes is not None:
             out_dict["y"] = np.array(self.classes[idx], dtype=np.int64)
+        if len(arr.shape) == 2:
+            arr = np.stack((arr,) * 3, axis=-1)
         return np.transpose(arr, [2, 0, 1]), out_dict
 
 
