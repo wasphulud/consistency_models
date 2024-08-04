@@ -1,12 +1,11 @@
 import copy
 import functools
 import sys
-from typing import Any, List, Mapping
+from typing import Any, Iterator, List, Mapping, Tuple, Union
 
-import numpy as np
-import numpy.typing as npt
 import torch
 from denoising.karras_denoiser import consistency_loss
+from infrastructure.device import get_device
 from sampling.resample import UniformSampler
 from torch import nn
 from torch.optim import RAdam
@@ -21,8 +20,9 @@ class CDTrainLoop:
         model: nn.Module,
         teacher_model: nn.Module,
         target_model: nn.Module,
-        dataloader: DataLoader,
+        dataloader: Iterator[Tuple[torch.Tensor, Mapping[str, List[int]]]],
         experiment_args: Mapping[str, Any],
+        device: Union[str, torch.device, int],
     ):  # type: ignore
 
         self.current_step = 0
@@ -38,10 +38,17 @@ class CDTrainLoop:
         self.batch_size = experiment_args["batch_size"]
         self.sampler = UniformSampler(self.experiment_args["num_steps"])
 
+        self.device = device
         self.model = model
+        self.model.to(device)
+
         self.teacher_model = teacher_model
+        self.teacher_model.to(device)
+
         self.target_model = target_model
-        self.dataloader = dataloader  # type: ignore
+        self.model.to(device)
+
+        self.dataloader = dataloader
 
         self.teacher_model.requires_grad_(False)
         self.teacher_model.eval()
@@ -72,13 +79,13 @@ class CDTrainLoop:
     def train(self):
 
         while self.current_step < self.total_training_steps:
-            batch, cond = next(self.dataloader)  # type: ignore
+            batch, cond = next(self.dataloader)
             print("batch loaded")
             self.run_step(batch, cond)
             print("step ran")
 
-    def run_step(self, batch: npt.NDArray[np.float64], cond: Mapping[str, List[int]]):
-        self.opt.zero_grad()  # TODO: Do we need MixedPrecisionTrainer ?
+    def run_step(self, batch: torch.Tensor, cond: Mapping[str, List[int]]):
+        self.opt.zero_grad()
         self.forward_backward(batch, cond)
         self.opt.step()
         self._update_ema()
@@ -87,10 +94,8 @@ class CDTrainLoop:
 
     def forward_backward(
         self,
-        batch: npt.NDArray[np.float64],
-        cond: Mapping[
-            str, List[int]
-        ],  # FIXME the hint are incorrect, the batch are tensors not numpy arrays
+        batch: torch.Tensor,
+        cond: Mapping[str, List[int]],
     ):
         timestep, weights = self.sampler.sample(batch.shape[0])
 
@@ -167,7 +172,9 @@ def initialize_inputs(dataloader: DataLoader, model: nn.Module, teacher_path: st
         "rho": 7.0,
     }
 
-    CDTrainLoop(model, teacher_model, target_model, dataloader, experiment_args).train()
+    CDTrainLoop(
+        model, teacher_model, target_model, dataloader, experiment_args, get_device()
+    ).train()
 
 
 def create_ema_and_scales_fn(start_ema, start_scales):
