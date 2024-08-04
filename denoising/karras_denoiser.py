@@ -67,7 +67,7 @@ def consistency_loss(
         return samples
 
     indices = torch.randint(
-        0, num_scales - 1, (x_start.shape[0],)
+        0, num_scales - 1, (x_start.shape[0],), device=x_start.device
     )  # TODO move to device
 
     t, t2 = get_timesteps(rho, sigma_min, sigma_max, indices, num_scales)
