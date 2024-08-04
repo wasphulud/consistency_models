@@ -13,5 +13,7 @@ Upskill DGM
 - [x] Implement EMA
 - [ ] Use GPU
 - [ ] Train and overfit small dataset
+- [ ] Improve Readme
 - [ ] Clean
 - [ ] Refactor + finalize type hint
+- [ ] Improve Readme
