@@ -12,9 +12,13 @@ Upskill DGM
 - [x] ~~Implement optimization using RADAM~~
 - [x] ~~Implement EMA~~
 - [x] ~~Use GPU~~
-- [ ] Save and load weights
-- [ ] sample images
-- [ ] Train and overfit small dataset
+- [ ] Save weights
+- [ ] Load weights
+- [ ] Sample images
+- [ ] Overfit on small dataset ? Is this possible
+- [ ] Type hint
+- [ ] Train Imagenet
+- [ ] Evaluation code
+- [ ] Evaluate trained model
 - [ ] Improve Readme
 - [ ] Refactor
-- [ ] Type hint
