@@ -5,12 +5,13 @@ from typing import Any, Iterator, List, Mapping, Tuple, Union
 
 import numpy as np
 import torch
-from denoising.karras_denoiser import consistency_loss
-from infrastructure.device import get_device
-from sampling.resample import UniformSampler
 from torch import nn
 from torch.optim import RAdam
 from torch.utils.data import DataLoader
+
+from denoising.karras_denoiser import consistency_loss
+from infrastructure.device import get_device
+from sampling.resample import UniformSampler
 
 sys.path.append("..")
 
@@ -82,6 +83,7 @@ class CDTrainLoop:
         while self.current_step < self.total_training_steps:
             batch, cond = next(self.dataloader)
             batch = batch.to(self.device)
+
             cond = {k: v.to(self.device) for k, v in cond.items()}
             print("batch loaded")
             self.run_step(batch, cond)
